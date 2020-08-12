@@ -1,0 +1,797 @@
+---
+## This is a sample template for demo purpose in a non production environment 
+## Edit according to your requirements prior to deployment.
+## It creates a CloudFront distribution with a PUBLIC website in a new VPC. 
+## There 2 EC2 instances in an auto-scaling group behind a PUBLIC ALB with the default Apache index.html
+## This template MUST be deployed in N. Va (us-east-1) due to the Global WAF ACL requirement.
+##
+## Changelog:
+##  - Initial sample
+##
+## Dependencies:
+## CF, WAF, EC2, ALB, SM, Lambda, US-EAST-1
+
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::SecretsManager-2020-07-23'
+Description: CloudFront - WAF - Secrets Manager - Demo
+
+## Parameters
+Parameters:
+  EC2InstanceSize:
+    Default: "t3.micro"
+    Description: Instance size for Web Servers.
+    Type: String
+    AllowedValues:
+      - "t2.micro"
+      - "t2.small"
+      - "t2.medium"
+      - "t3.micro"
+      - "t3.small"
+      - "t3.medium"
+  RotateInterval:
+    Default: "1"
+    Description: Rotation interval in days for origin secret value. Full rotation requires 2 intervals.
+    Type: Number
+    MinValue: "1"
+  HeaderName:
+    Default: "X-Origin-Verify"
+    Description: Header name for secret string.
+    Type: String
+  WAFRulePriority:
+    Default: "0"
+    Description: Rule number to use for regional WAF web ACL. 0 is recommended.
+    Type: Number
+  ArtifactsBucket:
+    Description: S3 bucket with artifact files (Lambda functions, templates, html files, etc.). Leave default.
+    Type: String
+    Default: cgull-artifacts-us-east-1
+    AllowedPattern: ^[0-9a-zA-Z]+([0-9a-zA-Z-]*[0-9a-zA-Z])*$
+    ConstraintDescription: ArtifactsBucket S3 bucket name can include numbers, lowercase letters, uppercase letters, and hyphens (-).
+      It cannot start or end with a hyphen (-).
+  ArtifactsPrefix:
+    Description: Path in the S3 bucket containing artifact files. Leave default.
+    Type: String
+    Default: public/
+    AllowedPattern: ^[0-9a-zA-Z-/]*$
+    ConstraintDescription: ArtifactsPrefix key prefix can include numbers, lowercase letters, uppercase letters, hyphens (-),
+      and forward slash (/). Leave default.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: Main Configuration
+      Parameters:
+      - EC2InstanceSize
+      - HeaderName
+      - WAFRulePriority
+      - RotateInterval
+    - Label:
+        default: Artifact Configuration
+      Parameters:
+      - ArtifactsBucket
+      - ArtifactsPrefix
+    ParameterLabels:
+      EC2InstanceSize:
+        Description: Instance size for Web Servers.
+      RotateInterval:
+        Description: Rotation interval in days for origin secret value. Full rotation requires 2 intervals.
+      HeaderName:
+        Description: Header name for secret string.
+      WAFRulePriority:
+        Description: Rule number to use for regional WAF web ACL. 0 is recommended.
+      ArtifactsBucket:
+        Description: S3 bucket with artifact files (Lambda functions, templates, html files, etc.). Leave default.
+      ArtifactsPrefix:
+        Description: Path in the S3 bucket containing artifact files. Leave default.
+
+## Resources
+
+Resources:
+
+  ## The VPC
+  vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: default
+      CidrBlock: !Sub 10.5.0.0/16
+      Tags:
+      - Key: Name
+        Value: !Join ["-" , [!Ref 'AWS::StackName', vpc]]
+
+  ## Create an IGW & attach it to the VPC
+  vpcIgw:
+      Type: AWS::EC2::InternetGateway
+      Properties:
+        Tags:
+        - Key: Name
+          Value: !Join ["-" , [!Ref 'AWS::StackName', igw]]
+
+  attachIgwVpc:
+      Type: AWS::EC2::VPCGatewayAttachment
+      Properties:
+        VpcId: !Ref vpc
+        InternetGatewayId: !Ref vpcIgw
+
+  ## Create a public subnet in each AZ
+  sub1Public:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: !Ref vpc
+        CidrBlock: !Sub 10.5.1.0/24
+        AvailabilityZone: !Select 
+            - 0
+            - !GetAZs 
+                Ref: 'AWS::Region'
+        MapPublicIpOnLaunch: false
+        Tags:
+        - Key: Name
+          Value: !Join ["-" , [!Ref 'AWS::StackName', PubSub1]]
+  sub2Public:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: !Ref vpc
+        CidrBlock: !Sub 10.5.2.0/24
+        AvailabilityZone: !Select 
+            - 1
+            - !GetAZs 
+                Ref: 'AWS::Region'
+        MapPublicIpOnLaunch: false
+        Tags:
+        - Key: Name
+          Value: !Join ["-" , [!Ref 'AWS::StackName', PubSub2]]
+
+  ## Associate the public subnets with a public route table
+  rtbPublic:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId: !Ref vpc
+        Tags:
+        - Key: Name
+          Value: !Join ["-" , [!Ref 'AWS::StackName', PubRoutes]]
+
+  rteToIgw:
+      Type: AWS::EC2::Route
+      DependsOn: attachIgwVpc
+      Properties:
+        RouteTableId: !Ref rtbPublic
+        DestinationCidrBlock: 0.0.0.0/0
+        GatewayId: !Ref vpcIgw
+
+  srta1Public:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId: !Ref sub1Public
+        RouteTableId: !Ref rtbPublic
+
+  srta2Public:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId: !Ref sub2Public
+        RouteTableId: !Ref rtbPublic
+
+  ## Create a private subnet in each AZ
+  sub1Private:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: !Ref vpc
+        CidrBlock: !Sub 10.5.11.0/24
+        AvailabilityZone: !Select 
+            - 0
+            - !GetAZs 
+                Ref: 'AWS::Region'
+        MapPublicIpOnLaunch: false
+        Tags:
+        - Key: Name
+          Value: !Join ["-" , [!Ref 'AWS::StackName', PrvSub1]]
+
+  sub2Private:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: !Ref vpc
+        CidrBlock: !Sub 10.5.12.0/24
+        AvailabilityZone: !Select 
+            - 1
+            - !GetAZs 
+                Ref: 'AWS::Region'
+        MapPublicIpOnLaunch: false
+        Tags:
+        - Key: Name
+          Value: !Join ["-" , [!Ref 'AWS::StackName', PrvSub2]]
+
+  ## Create a NAT Gateway & EIP
+  natEip:
+      Type: AWS::EC2::EIP
+      Properties:
+          Domain: vpc
+  vpcNgw:
+    Type: AWS::EC2::NatGateway
+    DependsOn: attachIgwVpc
+    Properties:
+        AllocationId: !GetAtt natEip.AllocationId
+        SubnetId: !Ref sub2Public
+        Tags:
+        - Key: Name
+          Value: !Join ["-" , [!Ref 'AWS::StackName', Ngw]]
+
+  ## Associate the private subnets with a natted route table
+  rtbNat:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref vpc
+      Tags:
+      - Key: Name
+        Value: !Join ["-" , [!Ref 'AWS::StackName', NgwRoutes]]
+  rteToNgw:
+    Type: AWS::EC2::Route
+    DependsOn: vpcNgw
+    Properties:
+      RouteTableId: !Ref rtbNat
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref vpcNgw
+  srta1Ngw:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref sub1Private
+      RouteTableId: !Ref rtbNat
+  srta2Ngw:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref sub2Private
+      RouteTableId: !Ref rtbNat
+    
+  sgLoadBalancer:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+        VpcId: !Ref vpc
+        GroupDescription: Load Balancer Security Group
+        SecurityGroupIngress:
+            - IpProtocol: tcp
+              FromPort: 80
+              ToPort: 80
+              CidrIp: 0.0.0.0/0
+        Tags:
+          - Key: Name
+            Value: !Join ["-" , [!Ref 'AWS::StackName', AlbSg]]
+
+  Alb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+        Scheme: internet-facing
+        SecurityGroups: 
+          - !Ref sgLoadBalancer
+        Subnets: [ !Ref sub1Public, !Ref sub2Public ]
+        Tags:
+          - Key: Name
+            Value: !Join ["-" , [!Ref 'AWS::StackName', Alb]]
+
+  AlbTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+        HealthCheckIntervalSeconds: 30
+        HealthCheckPath: /index.html
+        HealthCheckProtocol: HTTP
+        HealthCheckTimeoutSeconds: 5
+        HealthyThresholdCount: 2
+        Port: 80
+        Protocol: HTTP
+        UnhealthyThresholdCount: 10
+        VpcId: !Ref vpc
+        Tags:
+          - Key: Name
+            Value: !Join ["-" , [!Ref 'AWS::StackName', TargGrp]]
+
+  AlbListenerHttp:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+        LoadBalancerArn: !Ref Alb
+        Port: 80
+        Protocol: HTTP
+        DefaultActions:
+          - Type: forward
+            TargetGroupArn: !Ref AlbTargetGroup
+
+  OriginVerifySecret:
+    Type: 'AWS::SecretsManager::Secret'
+    Properties:
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"HEADERVALUE": "RandomPassword"}'
+        GenerateStringKey: "HEADERVALUE"
+        ExcludePunctuation: true
+
+  RotateFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref OriginSecretRotateFunction
+      Action: lambda:InvokeFunction
+      Principal: 'secretsmanager.amazonaws.com'
+
+  OriginVerifyRotateSchedule:
+    Type: AWS::SecretsManager::RotationSchedule
+    Properties: 
+      RotationLambdaARN: !GetAtt OriginSecretRotateFunction.Arn
+      RotationRules: 
+        AutomaticallyAfterDays: !Ref RotateInterval
+      SecretId: !Ref OriginVerifySecret
+
+  PythonRequestsLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      CompatibleRuntimes:
+        - python3.7
+      Content:
+        S3Bucket: !Ref ArtifactsBucket
+        S3Key: !Sub ${ArtifactsPrefix}python-requests-lambda-layer.zip
+      Description: Python requests module and deps
+      LayerName: python-requests
+
+  OriginSecretRotateFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Serets Manager Rotation Lambda
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.7
+      Layers: 
+        - !Ref PythonRequestsLayer
+      Environment:
+        Variables:
+          WAFACLID: !GetAtt wafACLR.Id
+          WAFACLNAME: !Select [0, !Split ['|', !Ref 'wafACLR']]
+          WAFRULEPRI: !Ref WAFRulePriority
+          CFDISTROID: !Ref CloudFrontDistribution
+          HEADERNAME: !Ref HeaderName
+          ORIGINURL: !Sub 'http://${Alb.DNSName}'
+          STACKNAME: !Ref AWS::StackName
+          AWSREGION: !Ref AWS::Region
+      Role: !GetAtt OriginSecretRotateExecutionRole.Arn
+      Timeout: 300
+      Code:
+        S3Bucket: !Ref ArtifactsBucket
+        S3Key: !Sub ${ArtifactsPrefix}origin-secret-rotate.zip
+
+  OriginSecretRotateExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: OriginVerifyRotatePolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            - logs:DescribeLogStreams
+            Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*OriginSecretRotateFunction*'
+          - Effect: Allow
+            Action:
+            - secretsmanager:DescribeSecret
+            - secretsmanager:GetSecretValue
+            - secretsmanager:PutSecretValue
+            - secretsmanager:UpdateSecretVersionStage
+            Resource: !Ref OriginVerifySecret
+          - Effect: Allow
+            Action:
+            - secretsmanager:GetRandomPassword
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - cloudfront:GetDistribution
+            - cloudfront:GetDistributionConfig
+            - cloudfront:ListDistributions
+            - cloudfront:UpdateDistribution
+            Resource: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}'
+          - Effect: Allow
+            Action:
+            - wafv2:*
+            Resource: !GetAtt wafACLR.Arn
+
+  wafACLR:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub '${AWS::StackName}ACLR'
+      Scope: REGIONAL
+      DefaultAction:
+          Block: {}
+      VisibilityConfig:
+          SampledRequestsEnabled: true
+          CloudWatchMetricsEnabled: true
+          MetricName: !Sub '${AWS::StackName}ACLMetricR'
+      Rules:
+          - Name: !Sub '${AWS::StackName}XRule'
+            Priority: !Ref WAFRulePriority
+            Action:
+              Allow: {}
+            VisibilityConfig:
+              SampledRequestsEnabled: true
+              CloudWatchMetricsEnabled: true
+              MetricName: !Sub '${AWS::StackName}XMetric'
+            Statement:
+              OrStatement:
+                Statements:
+                - ByteMatchStatement:
+                    FieldToMatch:
+                      SingleHeader:
+                        Name: !Ref HeaderName
+                    PositionalConstraint: EXACTLY
+                    SearchString: !Join ['', ['{{resolve:secretsmanager:', !Ref OriginVerifySecret, ':SecretString:HEADERVALUE}}' ]]
+                    TextTransformations:
+                      - Priority: 0
+                        Type: NONE
+                - ByteMatchStatement:
+                    FieldToMatch:
+                      SingleHeader:
+                        Name: !Ref HeaderName
+                    PositionalConstraint: EXACTLY
+                    SearchString: !Join ['', ['{{resolve:secretsmanager:', !Ref OriginVerifySecret, ':SecretString:HEADERVALUE}}' ]]
+                    TextTransformations:
+                      - Priority: 0
+                        Type: NONE
+                    
+  wafACLG:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub '${AWS::StackName}ACLG'
+      Scope: CLOUDFRONT
+      DefaultAction:
+        Allow: {}
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub '${AWS::StackName}ACLMetricG'
+      Rules:
+        - Name: !Sub '${AWS::StackName}WafIpBlacklist'
+          Priority: 0
+          Action:
+            Block: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub '${AWS::StackName}WafIpBlacklist'
+          Statement:
+            OrStatement:
+              Statements:
+              - IPSetReferenceStatement: 
+                  Arn: !GetAtt wafBlacklistIpSetV4.Arn
+              - IPSetReferenceStatement:
+                  Arn: !GetAtt wafBlacklistIpSetV6.Arn
+
+
+## Associate WAF ACL with load balancer
+  wafALBAssociation:
+    Type: AWS::WAFv2::WebACLAssociation
+    Properties:
+        ResourceArn: 
+            !Sub 
+            - 'arn:aws:elasticloadbalancing:${AWS::Region}:${AWS::AccountId}:loadbalancer/${TargetALB}'
+            - TargetALB: !GetAtt Alb.LoadBalancerFullName
+        WebACLArn: !GetAtt wafACLR.Arn
+
+  ## Configure the ECS ASG, security group, launch configuration, IAM role, load balancer, cloudwatch log group
+  cfalbEC2Sg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+        VpcId: !Ref vpc
+        GroupDescription: EC2 Instance Security Group
+        SecurityGroupIngress:
+            - IpProtocol: tcp
+              FromPort: 80
+              ToPort: 80
+              SourceSecurityGroupId: !Ref sgLoadBalancer
+        Tags:
+          - Key: Name
+            Value: !Join ["-" , [!Ref 'AWS::StackName', EC2Sg]]
+
+  LaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId:
+        !GetAtt AMIInfo.Id
+      SecurityGroups: 
+      - !GetAtt cfalbEC2Sg.GroupId
+      InstanceType: !Ref EC2InstanceSize
+      IamInstanceProfile:
+        Ref: EC2InstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          yum update -y
+          yum install -y https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_amd64/amazon-ssm-agent.rpm
+          yum install -y curl httpd awslogs
+          /usr/bin/aws configure set region ${AWS::Region}
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource LaunchConfiguration --configsets site_config --region ${AWS::Region}
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource AutoScalingGroup --region ${AWS::Region}
+
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          site_config:
+          - init_site
+        init_site:
+          files:
+            /etc/awslogs/awslogs.conf:
+              content: !Sub |
+                [general]
+                state_file = /var/lib/awslogs/agent-stat
+                [/var/log/http-access]
+                file = /var/log/httpd/access_log
+                log_group_name = ${HttpAccessLogGroup}
+                buffer_duration = 5000
+                log_stream_name = {instance_id}-http-access
+                initial_position = start_of_file
+              mode: "000644"
+              owner: "root"
+              group: "root"
+          commands:
+            01config_httpd:
+              cwd: /tmp
+              command:
+                "cp -p /usr/share/httpd/noindex/index.html /var/www/html/"
+            02start_services:
+              cwd: /var/www/
+              env:
+                PATH: /usr/bin:/usr/local/bin:/sbin:$PATH
+              command: "systemctl enable httpd && systemctl start httpd; systemctl start awslogsd && systemctl enable awslogsd.service"
+
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+        VPCZoneIdentifier:
+            - !Ref sub1Private
+            - !Ref sub2Private
+        LaunchConfigurationName: !Ref LaunchConfiguration
+        MinSize: '2'
+        MaxSize: '2'
+        TargetGroupARNs:
+        - !Ref AlbTargetGroup
+        DesiredCapacity: '2'
+        HealthCheckType: ELB
+        HealthCheckGracePeriod: 240
+        Tags:
+        - Key: Name
+          Value: !Join ["-" , [!Ref 'AWS::StackName', node]]
+          PropagateAtLaunch: true
+    CreationPolicy:
+      ResourceSignal:
+          Timeout: PT10M
+    UpdatePolicy:
+      AutoScalingReplacingUpdate:
+          WillReplace: 'true'
+
+  ## Deploy a WAF WebACL, Sample Rule, Sample IPSet
+  wafBlacklistIpSetV4:
+    Type: AWS::WAFv2::IPSet
+    Properties:
+        Description: SampleIPSetV4
+        Scope: CLOUDFRONT
+        IPAddressVersion: IPV4
+        Addresses:
+            - 127.0.0.0/8
+  wafBlacklistIpSetV6:
+    Type: AWS::WAFv2::IPSet
+    Properties:
+        Description: SampleIPSetV6
+        Scope: CLOUDFRONT
+        IPAddressVersion: IPV6
+        Addresses:
+            - ::1/128
+
+  # CLOUDFRONT DISTRIBUTION
+  CloudFrontDistribution:
+    Type: 'AWS::CloudFront::Distribution'
+    DependsOn: wafACLG
+    Properties:
+      DistributionConfig:
+        Comment: 'CF WAF SM Origin Verify Sample'
+        WebACLId: !GetAtt wafACLG.Arn
+        Origins:
+          - DomainName: !GetAtt 'Alb.DNSName'
+            Id: !Ref 'Alb'
+            CustomOriginConfig:
+              HTTPPort: '80'
+              HTTPSPort: '443'
+              OriginSSLProtocols:
+                - TLSv1
+                - TLSv1.1
+                - TLSv1.2
+                - SSLv3
+              OriginProtocolPolicy: http-only
+            OriginCustomHeaders: 
+              - HeaderName: !Ref HeaderName
+                HeaderValue: !Join ['', ['{{resolve:secretsmanager:', !Ref OriginVerifySecret, ':SecretString:HEADERVALUE}}' ]]
+        Enabled: true
+        HttpVersion: 'http2'
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+            - DELETE
+            - OPTIONS
+            - PATCH
+            - POST
+            - PUT
+          SmoothStreaming: 'false'
+          TargetOriginId: !Ref 'Alb'
+          ForwardedValues:
+            QueryString: 'false'
+          ViewerProtocolPolicy: redirect-to-https
+
+  ##  Configure the EC2 IAM role along with supporting resources
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join ["-" , [!Ref 'AWS::StackName', EC2Role]]
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - "sts:AssumeRole"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+                - "ssm.amazonaws.com"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: inline-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                  - "logs:DescribeLogStreams"
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${HttpAccessLogGroup}*"
+
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+        Path: /
+        Roles:
+        - Ref: EC2InstanceRole
+
+  AMILambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: root
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*AMIInfoFunction*'
+          - Effect: Allow
+            Action:
+            - ec2:DescribeImages
+            Resource: "*"
+
+  # AMIInfoFunction - Look up an AMI based on a NameFilter
+  #
+  # This AWS Lambda function is used to look up an Amazon EC2 AMI based
+  # on a name filter. An example of a name filter would be:
+  #
+  # amzn2-ami-hvm\*ebs
+  #
+  # After looking up the names of all images that satify the filter,
+  # they are sorted in reverse by date/time stamp and the first AMI
+  # ID (which corresponds to the newest AMI) is returned.
+  #
+  # Using a Lambda function makes it possible to look up the AMI
+  # dynamically.  THe alternative would be to create a static map.
+
+  AMIInfoFunction:
+    Type: AWS::Lambda::Function
+    Properties: 
+        Description: "Look up an AMI based on a filter"
+        Handler: index.handler
+        MemorySize: 128
+        Role: !GetAtt AMILambdaExecutionRole.Arn
+        Runtime: "python3.6"
+        Timeout: 30
+        Code:
+            ZipFile: !Sub |
+              import json
+              import boto3
+              import cfnresponse
+              def handler(event, context):
+                if event['RequestType'] == 'Delete':
+                  responseData = {}      
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+                  return
+                
+                ec2=boto3.client('ec2')
+                imageDescriptions=ec2.describe_images(
+                  Owners=['amazon'],
+                  Filters=[
+                    {'Name': 'name', 'Values': [event['ResourceProperties']['NameFilter']]},
+                    {'Name': 'architecture', 'Values': ['x86_64']}
+                  ],
+                )
+                
+                numImageDescriptions = len(imageDescriptions['Images'])
+                if numImageDescriptions < 2:
+                  responseData = {}
+                  cfnresponse.send(event, context, cfnresponse.FAILED, responseData)
+                else:
+                  amiNames = sorted(imageDescriptions['Images'],
+                    key=lambda x: x['CreationDate'],
+                    reverse=True)
+                  responseData = {}
+                  responseData['Id'] = amiNames[0]['ImageId']
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+                return
+
+  AMIInfo:
+    Type: Custom::AMIInfo
+    Properties:
+        ServiceToken: !GetAtt AMIInfoFunction.Arn
+        NameFilter: 'amzn2-ami-hvm*gp2'
+
+  HttpAccessLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      RetentionInDays: 7
+
+## Outputs
+Outputs:
+  accountId:
+    Description: AWS account number
+    Value: !Ref AWS::AccountId
+  Region:
+    Description: AWS region
+    Value: !Ref AWS::Region
+  cfEndpoint:
+    Description: Test website - CloudFront endpoint
+    Value: !Join ['', ['https://', !GetAtt 'CloudFrontDistribution.DomainName']]
+  albEndpoint:
+    Description: Test website origin - ALB endpoint
+    Value: !Join ['', ['http://', !GetAtt 'Alb.DNSName']]
+  OriginSecretRotateFunction:
+    Value: !Sub https://console.aws.amazon.com/lambda/home?region=${AWS::Region}#/functions/${OriginSecretRotateFunction}
+    Description: Secrets Manager Rotation Lambda Function
+  HttpAccessLogs:
+    Value: !Sub https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#logStream:group=${HttpAccessLogGroup}
+    Description: HTTP Access Logs
+  cfDistro:
+    Description: CloudFront distribution associated with test website
+    Value: !Sub https://console.aws.amazon.com/cloudfront/home?region=${AWS::Region}#distribution-settings:${CloudFrontDistribution}
+  OriginVerifySecret:
+    Description: Secrets Manager Secret for Origin Validation 
+    Value: !Sub https://console.aws.amazon.com/secretsmanager/home?region=${AWS::Region}#/secret?name=${OriginVerifySecret}
+  wafWebACLR:
+    Description: Regional WAF Web ACL associated with test website
+    Value: !Join ['', ['https://console.aws.amazon.com/wafv2/homev2/web-acl/', !Select [0, !Split ['|', !Ref 'wafACLR']], '/', !GetAtt 'wafACLR.Id', '/overview?region=', !Sub '${AWS::Region}']]
+  wafWebACLG:
+    Description: Global WAF Web ACL associated with test website
+    Value: !Join ['', ['https://console.aws.amazon.com/wafv2/homev2/web-acl/', !Select [0, !Split ['|', !Ref 'wafACLG']], '/', !GetAtt 'wafACLG.Id', '/overview?region=global']]
+  AMIId:
+    Description: AMI Id
+    Value: !GetAtt AMIInfo.Id

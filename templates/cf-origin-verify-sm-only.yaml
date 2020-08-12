@@ -1,0 +1,242 @@
+---
+## This is a sample template for demo purpose in a non production environment only! 
+## Edit according to your requirements prior to deployment.
+## It creates a Secrets Manager secret, Lambda function and IAM resources
+##
+## **TEMPLATE REQUIREMENTS** 
+## This template REQUIRES the following exisitng configuration:
+##
+## 1. An existing CloudFront distribution configured with an AWS regional WAF protected 
+## origin that is internet accessible.
+##
+## 2. The CloudFront distribution has been prerconfigured with the origin custom header 
+## you plan to use for this template. This value must match the HeaderName value below.
+##
+## 3. Add the Url for the origin resource (ALB/APIGW) below that is associated with the 
+## WAF ACL Id provided below for the WAFAclId parameter.
+##
+## 4. Additional IAM permissions may be required if other rules are in scope for the target 
+## regional WAF web ACL update; see line 218.
+##
+## Changelog:
+##  - Initial sample
+##
+## Dependencies:
+## CF, WAF, SM, Lambda
+
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::SecretsManager-2020-07-23'
+Description: CloudFront - WAF - Secrets Manager - Demo
+
+## Parameters
+Parameters:
+  WAFAclId:
+    AllowedPattern: ".+"
+    Description: Web ACL Id for REGIONAL AWS WAF that IS Associate with your CloudFront origin resource configured in the CFDistroId below.
+    Type: String
+  WAFRulePriority:
+    Default: "0"
+    Description: Rule number to use for regional WAF web ACL. 0 is recommended.
+    Type: Number
+  WAFAclName:
+    AllowedPattern: ".+"
+    Description: Web ACL Name for REGIONAL AWS WAF
+    Type: String
+  CFDistroId:
+    AllowedPattern: ".+"
+    Description: Cloudfront distribution Id with origin already containing custom header.
+    Type: String
+  OriginUrl:
+    AllowedPattern: ".+"
+    Description: Origin URL being protected by the regional AWS WAF. e.g. https://www.example.com
+    Type: String
+  RotateInterval:
+    Default: "1"
+    Description: Rotation interval in days for origin secret value. Full rotation requires 2 intervals.
+    Type: Number
+    MinValue: "1"
+  HeaderName:
+    Default: "X-Origin-Verify"
+    Description: Header name for secret string.
+    Type: String
+  ArtifactsBucket:
+    Description: S3 bucket with artifact files (Lambda functions, templates, html files, etc.). Leave default.
+    Type: String
+    Default: cgull-artifacts-us-east-1
+    AllowedPattern: ^[0-9a-zA-Z]+([0-9a-zA-Z-]*[0-9a-zA-Z])*$
+    ConstraintDescription: ArtifactsBucket S3 bucket name can include numbers, lowercase letters, uppercase letters, and hyphens (-).
+      It cannot start or end with a hyphen (-).
+  ArtifactsPrefix:
+    Description: Path in the S3 bucket containing artifact files. Leave default.
+    Type: String
+    Default: public/
+    AllowedPattern: ^[0-9a-zA-Z-/]*$
+    ConstraintDescription: ArtifactsPrefix key prefix can include numbers, lowercase letters, uppercase letters, hyphens (-),
+      and forward slash (/). Leave default.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: Main Configuration
+      Parameters:
+      - WAFAclName
+      - WAFAclId
+      - WAFRulePriority
+      - CFDistroId
+      - OriginUrl
+      - HeaderName
+      - RotateInterval
+    - Label:
+        default: Artifact Configuration
+      Parameters:
+      - ArtifactsBucket
+      - ArtifactsPrefix
+    ParameterLabels:
+      RotateInterval:
+        Description: Rotation interval in days for origin secret value. Full rotation requires 2 intervals.
+      HeaderName:
+        Description: Header name for secret string.
+      WAFAclName:
+        Description: Web ACL Name for REGIONAL AWS WAF
+      CFDistroId:
+        Description: Cloudfront distribution Id with origin already containing custom header.
+      OriginUrl:
+        Description: Origin URL being protected by the regional AWS WAF. e.g. http://www.example.com
+      WAFRulePriority:
+        Description: Rule number to use for regional WAF web ACL. 0 is recommended.
+      ArtifactsBucket:
+        Description: S3 bucket with artifact files (Lambda functions, templates, html files, etc.). Leave default.
+      ArtifactsPrefix:
+        Description: Path in the S3 bucket containing artifact files. Leave default.
+
+## Resources
+
+Resources:
+
+  OriginVerifySecret:
+    Type: 'AWS::SecretsManager::Secret'
+    Properties:
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"HEADERVALUE": "RandomPassword"}'
+        GenerateStringKey: "HEADERVALUE"
+        ExcludePunctuation: true
+
+  RotateFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref OriginSecretRotateFunction
+      Action: lambda:InvokeFunction
+      Principal: 'secretsmanager.amazonaws.com'
+
+  OriginVerifyRotateSchedule:
+    Type: AWS::SecretsManager::RotationSchedule
+    Properties: 
+      RotationLambdaARN: !GetAtt OriginSecretRotateFunction.Arn
+      RotationRules: 
+        AutomaticallyAfterDays: !Ref RotateInterval
+      SecretId: !Ref OriginVerifySecret
+
+  PythonRequestsLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      CompatibleRuntimes:
+        - python3.7
+      Content:
+        S3Bucket: !Ref ArtifactsBucket
+        S3Key: !Sub ${ArtifactsPrefix}python-requests-lambda-layer.zip
+      Description: Python requests module and deps
+      LayerName: python-requests
+
+  OriginSecretRotateFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Serets Manager Rotation Lambda
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.7
+      Layers: 
+        - !Ref PythonRequestsLayer
+      Environment:
+        Variables:
+          WAFACLID: !Ref WAFAclId
+          WAFACLNAME: !Ref WAFAclName
+          WAFRULEPRI: !Ref WAFRulePriority
+          CFDISTROID: !Ref CFDistroId
+          HEADERNAME: !Ref HeaderName
+          ORIGINURL: !Ref OriginUrl
+          STACKNAME: !Ref AWS::StackName
+          AWSREGION: !Ref AWS::Region
+      Role: !GetAtt OriginSecretRotateExecutionRole.Arn
+      Timeout: 300
+      Code:
+        S3Bucket: !Ref ArtifactsBucket
+        S3Key: !Sub ${ArtifactsPrefix}origin-secret-rotate.zip
+
+  OriginSecretRotateExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: OriginVerifyRotatePolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            - logs:DescribeLogStreams
+            Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*OriginSecretRotateFunction*'
+          - Effect: Allow
+            Action:
+            - secretsmanager:DescribeSecret
+            - secretsmanager:GetSecretValue
+            - secretsmanager:PutSecretValue
+            - secretsmanager:UpdateSecretVersionStage
+            Resource: !Ref OriginVerifySecret
+          - Effect: Allow
+            Action:
+            - secretsmanager:GetRandomPassword
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - cloudfront:GetDistribution
+            - cloudfront:GetDistributionConfig
+            - cloudfront:ListDistributions
+            - cloudfront:UpdateDistribution
+            Resource: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CFDistroId}'
+          - Effect: Allow
+            Action:
+            - wafv2:*
+            Resource: !Sub 'arn:aws:wafv2:${AWS::Region}:${AWS::AccountId}:regional/webacl/${WAFAclName}/${WAFAclId}'
+
+## Outputs
+Outputs:
+  accountId:
+    Description: AWS account number
+    Value: !Ref AWS::AccountId
+  Region:
+    Description: AWS region
+    Value: !Ref AWS::Region
+  originUrl:
+    Description: Origin URL protected but regional WAF
+    Value: !Ref OriginUrl
+  OriginSecretRotateFunction:
+    Value: !Sub https://console.aws.amazon.com/lambda/home?region=${AWS::Region}#/functions/${OriginSecretRotateFunction}
+    Description: Secrets Manager Rotation Lambda Function
+  cfDistro:
+    Description: CloudFront distribution associated with orgin URL
+    Value: !Sub https://console.aws.amazon.com/cloudfront/home?region=${AWS::Region}#distribution-settings:${CFDistroId}
+  OriginVerifySecret:
+    Description: Secrets Manager Secret for Origin Validation 
+    Value: !Sub https://console.aws.amazon.com/secretsmanager/home?region=${AWS::Region}#/secret?name=${OriginVerifySecret}
+  wafWebACLR:
+    Description: Regional WAF Web ACL associated with origin
+    Value: !Join ['', ['https://console.aws.amazon.com/wafv2/homev2/web-acl/', !Ref 'WAFAclName', '/', !Ref WAFAclId, '/overview?region=', !Sub '${AWS::Region}']]
