@@ -4,7 +4,7 @@ This repository includes a sample solution you can deploy to see how its compone
 
 Although the sample solution is designed for deployment with CloudFront with an AWS WAF associated ALB as its origin, the same approach could be used for origins using Amazon API Gateway. A custom origin is any origin that is not an Amazon S3 bucket, with one exception. An Amazon S3 bucket that is configured with static website hosting is a custom origin. You can refer to our documentation for more information on securing content that CloudFront delivers from S3 origins. 
 
-This solution is intended to enhance security for CloudFront custom origins that support AWS WAF such as ALB and is not a substitute for authentication and authorization mechanisms within your web applications. In this solution, Secrets Manager provides a mechanism to create and rotate a random string value which is stored within CloudFront and AWS WAF configurations in your AWS account. When using Secrets Manger to store application secrets, such as login credentials they should not be hard-coded or stored in plaintext in the application. You should review your organization’s security requirements before using this solution.
+This solution is intended to enhance security for CloudFront custom origins that support AWS WAF such as ALB and is not a substitute for authentication and authorization mechanisms within your web applications. In this this solution, Secrets Manager is used to control, audit, monitor, and rotate a random string used within your CloudFront and AWS WAF configurations. Although most of these lifecycle attributes could be performed manually, Secrets Manager makes it easier.
 
 ### Solution diagram
 

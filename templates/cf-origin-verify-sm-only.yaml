@@ -18,6 +18,9 @@
 ## 4. Additional IAM permissions may be required if other rules are in scope for the target 
 ## regional WAF web ACL update; see line 218.
 ##
+## 5. Upload artifacts to in-region S3 location and update ArtifactsBucket and ArtifactsPrefix
+## parameters.
+##
 ## Changelog:
 ##  - Initial sample
 ##
@@ -67,12 +70,12 @@ Parameters:
     ConstraintDescription: ArtifactsBucket S3 bucket name can include numbers, lowercase letters, uppercase letters, and hyphens (-).
       It cannot start or end with a hyphen (-).
   ArtifactsPrefix:
-    Description: Path in the S3 bucket containing artifact files. Leave default.
+    Description: Path in the S3 bucket containing artifact files. Must be in-region.
     Type: String
     Default: public/
     AllowedPattern: ^[0-9a-zA-Z-/]*$
     ConstraintDescription: ArtifactsPrefix key prefix can include numbers, lowercase letters, uppercase letters, hyphens (-),
-      and forward slash (/). Leave default.
+      and forward slash (/). Must be in-region.
 
 Metadata:
   AWS::CloudFormation::Interface:
