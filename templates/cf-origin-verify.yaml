@@ -1,5 +1,5 @@
 ---
-## This is a sample template for demo purpose in a non production environment 
+## This is a sample template for demonstration purposes.
 ## Edit according to your requirements prior to deployment.
 ## It creates a CloudFront distribution with a PUBLIC website in a new VPC. 
 ## There 2 EC2 instances in an auto-scaling group behind a PUBLIC ALB with the default Apache index.html
