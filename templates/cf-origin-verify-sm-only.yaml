@@ -63,16 +63,16 @@ Parameters:
     Description: Header name for secret string.
     Type: String
   ArtifactsBucket:
-    Description: S3 bucket with artifact files (Lambda functions, templates, html files, etc.). Leave default.
+    Description: S3 bucket with artifact files (Lambda functions, templates, html files, etc.).
     Type: String
-    Default: cgull-artifacts-us-east-1
+    Default: 
     AllowedPattern: ^[0-9a-zA-Z]+([0-9a-zA-Z-]*[0-9a-zA-Z])*$
     ConstraintDescription: ArtifactsBucket S3 bucket name can include numbers, lowercase letters, uppercase letters, and hyphens (-).
       It cannot start or end with a hyphen (-).
   ArtifactsPrefix:
     Description: Path in the S3 bucket containing artifact files. Must be in-region.
     Type: String
-    Default: public/
+    Default: /
     AllowedPattern: ^[0-9a-zA-Z-/]*$
     ConstraintDescription: ArtifactsPrefix key prefix can include numbers, lowercase letters, uppercase letters, hyphens (-),
       and forward slash (/). Must be in-region.
@@ -109,9 +109,9 @@ Metadata:
       WAFRulePriority:
         Description: Rule number to use for regional WAF web ACL. 0 is recommended.
       ArtifactsBucket:
-        Description: S3 bucket with artifact files (Lambda functions, templates, html files, etc.). Leave default.
+        Description: S3 bucket with artifact files (Lambda functions, templates, html files, etc.).
       ArtifactsPrefix:
-        Description: Path in the S3 bucket containing artifact files. Leave default.
+        Description: Path in the S3 bucket containing artifact files.
 
 ## Resources
 
