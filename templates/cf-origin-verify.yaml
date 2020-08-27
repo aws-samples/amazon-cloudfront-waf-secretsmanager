@@ -506,7 +506,6 @@ Resources:
         Fn::Base64: !Sub |
           #!/bin/bash -xe
           yum update -y
-          yum install -y https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_amd64/amazon-ssm-agent.rpm
           yum install -y curl httpd awslogs
           /usr/bin/aws configure set region ${AWS::Region}
           /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource LaunchConfiguration --configsets site_config --region ${AWS::Region}
