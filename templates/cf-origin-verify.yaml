@@ -29,12 +29,12 @@ Parameters:
       - "t3.small"
       - "t3.medium"
   RotateInterval:
-    Default: "1"
+    Default: "7"
     Description: Rotation interval in days for origin secret value. Full rotation requires 2 intervals.
     Type: Number
     MinValue: "1"
   HeaderName:
-    Default: "X-Origin-Verify"
+    Default: X-Origin-Verify
     Description: Header name for secret string.
     Type: String
   WAFRulePriority:
@@ -51,7 +51,7 @@ Parameters:
   ArtifactsPrefix:
     Description: Path in the S3 bucket containing artifact files. Leave default.
     Type: String
-    Default: "public/sample/497_How_to_enhance_Amazon-CloudFront_Origin_Security/"
+    Default: public/sample/497_How_to_enhance_Amazon-CloudFront_Origin_Security/
     AllowedPattern: ^[0-9a-zA-Z-/_]*$
     ConstraintDescription: ArtifactsPrefix key prefix can include numbers, lowercase letters, uppercase letters, hyphens (-),
       and forward slash (/). Leave default.
@@ -325,7 +325,7 @@ Resources:
         S3Bucket: !Ref ArtifactsBucket
         S3Key: !Sub ${ArtifactsPrefix}python-requests-lambda-layer.zip
       Description: Python requests module and deps
-      LayerName: python-requests
+      LayerName: !Join ["-" , [!Ref 'AWS::StackName', python-requests]]
 
   OriginSecretRotateFunction:
     Type: AWS::Lambda::Function
