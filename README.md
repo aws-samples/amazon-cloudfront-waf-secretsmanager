@@ -1,4 +1,4 @@
-## How to Enhance Amazon CloudFront Origin Security with AWS WAF and AWS Secrets Manager
+## Enhance Amazon CloudFront Origin Security with AWS WAF and AWS Secrets Manager
 
 This repository includes a sample solution you can deploy to see how its components integrate to implement the origin access restriction. The sample solution includes a web server deployed on Amazon EC2 Linux instances running in an Amazon EC2 Autoscaling group. Elastic Load Balancing distributes the incoming application traffic across the EC2 instances using an ALB. The ALB is associated with an AWS WAF web access control list (ACL) which is used to validate the incoming origin requests. Finally, a CloudFront distribution is deployed with an AWS WAF web ACL and configured to point to the origin ALB.
 
@@ -6,7 +6,7 @@ Although the sample solution is designed for deployment with CloudFront with an 
 
 This solution is intended to enhance security for CloudFront custom origins that support AWS WAF such as ALB and is not a substitute for authentication and authorization mechanisms within your web applications. In this this solution, Secrets Manager is used to control, audit, monitor, and rotate a random string used within your CloudFront and AWS WAF configurations. Although most of these lifecycle attributes could be performed manually, Secrets Manager makes it easier.
 
-_Note: The sample solution requires deployment in the N. Virginia (us-east-1) region. An [additional sample template](templates/cf-origin-verify-sm-only.yaml) is available for testing this solution with an existing CloudFront distribution and regional WAF web ACL. Refer to the AWS regional service support information for more detail on regional service availability._
+_Note: The sample solution requires deployment in the N. Virginia (us-east-1) region. An [additional sample template](templates/cf-origin-verify-sm-only.yaml) is available for testing this solution with an existing CloudFront distribution and regional WAF web ACL.
 
 ### Solution diagram
 
