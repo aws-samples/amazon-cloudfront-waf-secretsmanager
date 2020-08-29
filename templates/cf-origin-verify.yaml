@@ -51,8 +51,8 @@ Parameters:
   ArtifactsPrefix:
     Description: Path in the S3 bucket containing artifact files. Leave default.
     Type: String
-    Default: public/sample/
-    AllowedPattern: ^[0-9a-zA-Z-/]*$
+    Default: "public/sample/497_How_to_enhance_Amazon-CloudFront_Origin_Security/"
+    AllowedPattern: ^[0-9a-zA-Z-/_]*$
     ConstraintDescription: ArtifactsPrefix key prefix can include numbers, lowercase letters, uppercase letters, hyphens (-),
       and forward slash (/). Leave default.
 
@@ -466,9 +466,9 @@ Resources:
               - IPSetReferenceStatement:
                   Arn: !GetAtt wafBlacklistIpSetV6.Arn
 
-
 ## Associate WAF ACL with load balancer
   wafALBAssociation:
+    DependsOn: wafACLR
     Type: AWS::WAFv2::WebACLAssociation
     Properties:
         ResourceArn: 
