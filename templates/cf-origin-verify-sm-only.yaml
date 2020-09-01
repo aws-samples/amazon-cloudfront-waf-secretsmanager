@@ -16,7 +16,7 @@
 ## WAF ACL Id provided below for the WAFAclId parameter.
 ##
 ## 4. Additional IAM permissions may be required if other rules are in scope for the target 
-## regional WAF web ACL update; see line 218.
+## regional WAF web ACL update; see lines 218 - 221.
 ##
 ## 5. Upload artifacts to in-region S3 location and update ArtifactsBucket and ArtifactsPrefix
 ## parameters.
