@@ -109,6 +109,7 @@ def update_wafacl(NewSecret, PrevSecret):
         if int(WAFRulePriority) != int(r['Priority']):
             newwafrules.append(r)
     
+    logger.info("Update WAF WebACL Id, %s." % WafAclId)
     response = client.update_web_acl(
     Name = WafAclName,
     Scope = 'REGIONAL',
@@ -151,31 +152,40 @@ def update_cfdistro(distroid, headervalue):
     diststatus = get_cfdistro(distroid)
     if 'Deployed' in diststatus['Distribution']['Status']:
         distconfig = get_cfdistro_config(distroid)
+        headercount = 0
+        #logger.info(distconfig)
         for k in distconfig['DistributionConfig']['Origins']['Items']:
             if k['CustomHeaders']['Quantity'] > 0:
                 for h in k['CustomHeaders']['Items']:
                     if HeaderName in h['HeaderName']:
+                        logger.info("Update custom header, %s for origin, %s." % (h['HeaderName'], k['Id']))
+                        headercount = headercount + 1
                         h['HeaderValue'] = headervalue
                     
                     else:
-                        logger.error("No custom header, %s found in distribution %s." % (HeaderName, distroid))
-                        raise ValueError("No custom header, %s found in distribution %s." % (HeaderName, distroid))
-
-                response = client.update_distribution(
-                    Id = distroid,
-                    IfMatch = distconfig['ResponseMetadata']['HTTPHeaders']['etag'],
-                    DistributionConfig = distconfig['DistributionConfig']
-                    )
-
-                return response
+                        logger.info("Ignore custom header, %s for origin, %s." % (h['HeaderName'], k['Id']))
+                        pass
 
             else:
-                logger.error("No custom header found in distribution %s." % distroid)
-                raise ValueError("No custom header found in distribution %s." % distroid)
+                logger.info("No custom headers found in origin, %s." % k['Id'])
+                pass
+        
+        if headercount < 1:
+            logger.error("No custom header, %s found in distribution Id, %s." % (HeaderName, distroid))
+            raise ValueError("No custom header found in distribution Id, %s." % distroid)
+        
+        else:
+            response = client.update_distribution(
+                Id = distroid,
+                IfMatch = distconfig['ResponseMetadata']['HTTPHeaders']['etag'],
+                DistributionConfig = distconfig['DistributionConfig']
+                )
+
+            return response
                 
     else:
-        logger.error("Distribution %s status is not Deployed." % distroid)
-        raise ValueError("Distribution %s status is not Deployed." % distroid)
+        logger.error("Distribution Id, %s status is not Deployed." % distroid)
+        raise ValueError("Distribution Id, %s status is not Deployed." % distroid)
 
 
 def test_origin(url, secret):
@@ -184,7 +194,7 @@ def test_origin(url, secret):
     headers={HeaderName: secret},
     )
     
-    logger.info("Testing %s response code %s " % (url, response.status_code))
+    logger.info("Testing URL, %s - response code, %s " % (url, response.status_code))
 
     if response.status_code == 200:
         return True
@@ -249,8 +259,8 @@ def set_secret(service_client, arn, token):
     # First check to confirm CloudFront distribution is in Deployed state
     diststatus = get_cfdistro(CFDistroId)
     if 'Deployed' not in diststatus['Distribution']['Status']:
-        logger.error("Distribution %s status is not Deployed." % CFDistroId)
-        raise ValueError("Distribution %s status is not Deployed." % CFDistroId)
+        logger.error("Distribution Id, %s status is not Deployed." % CFDistroId)
+        raise ValueError("Distribution Id, %s status is not Deployed." % CFDistroId)
     
     # Obtain secret value for AWSPENDING
     pending = service_client.get_secret_value(
@@ -274,19 +284,19 @@ def set_secret(service_client, arn, token):
     pendingsecret = json.loads(pending['SecretString'])
     currentsecret = json.loads(current['SecretString'])
     
-    # Update CloudFront custom header and regional WAF rule with AWSPENDING and AWSCURRENT
+    # Update CloudFront custom header and regional WAF WebACL rule with AWSPENDING and AWSCURRENT
     try:
 
         update_wafacl(pendingsecret['HEADERVALUE'], currentsecret['HEADERVALUE'])
 
-        # Sleep for 75 seconds for regional WAF ACL propagation
+        # Sleep for 75 seconds for regional WAF config propagation
         time.sleep(75)
 
         update_cfdistro(CFDistroId, pendingsecret['HEADERVALUE'])
     
     except ClientError as e:
         logger.error('Error: {}'.format(e))
-        raise ValueError("Failed to update resources CloudFront Id %s , WAF Id %s " % (CFDistroId, WafAclId))
+        raise ValueError("Failed to update resources CloudFront Distro Id %s , WAF WebACL Id %s " % (CFDistroId, WafAclId))
 
 
 def test_secret(service_client, arn, token):
@@ -329,10 +339,10 @@ def test_secret(service_client, arn, token):
     try:
         for s in secrets:
             if test_origin(OriginUrl, s):
-                return True
+                pass
             else:
-                logger.error("Tests failed for %s " % OriginUrl)
-                raise ValueError("Tests failed for %s " % OriginUrl)
+                logger.error("Tests failed for URL, %s " % OriginUrl)
+                raise ValueError("Tests failed for URL, %s " % OriginUrl)
 
     except ClientError as e:
         logger.error('Error: {}'.format(e))
