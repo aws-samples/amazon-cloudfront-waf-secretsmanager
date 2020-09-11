@@ -6,7 +6,7 @@ Although the sample solution is designed for deployment with CloudFront with an 
 
 This solution is intended to enhance security for CloudFront custom origins that support AWS WAF, such as ALB, and is not a substitute for authentication and authorization mechanisms within your web applications. In this solution, Secrets Manager is used to control, audit, monitor, and rotate a random string used within your CloudFront and AWS WAF configurations. Although most of these lifecycle attributes could be set manually, Secrets Manager makes it easier.
 
-_Note: The sample solution requires deployment in the N. Virginia (us-east-1) region. An [additional sample template](templates/cf-origin-verify-sm-only.yaml) is available for testing this solution with an existing CloudFront distribution and regional WAF web ACL.
+_Note: The sample solution requires deployment in the N. Virginia (us-east-1) region. An [additional sample template](templates/cf-origin-verify-sm-only.yaml) is available for testing this solution with an existing CloudFront distribution and regional WAF web ACL._
 
 ### Solution diagram
 
