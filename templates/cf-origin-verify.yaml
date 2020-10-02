@@ -600,7 +600,6 @@ Resources:
               HTTPPort: '80'
               HTTPSPort: '443'
               OriginSSLProtocols:
-                - TLSv1.1
                 - TLSv1.2
               OriginProtocolPolicy: http-only
             OriginCustomHeaders: 
