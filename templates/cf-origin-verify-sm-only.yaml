@@ -54,10 +54,10 @@ Parameters:
     Description: Origin URL being protected by the regional AWS WAF. e.g. https://www.example.com
     Type: String
   RotateInterval:
-    Default: "1"
+    Default: "7"
     Description: Rotation interval in days for origin secret value. Full rotation requires 2 intervals.
     Type: Number
-    MinValue: "7"
+    MinValue: "1"
   HeaderName:
     Default: X-Origin-Verify
     Description: Header name for secret string.
