@@ -45,7 +45,7 @@ Parameters:
     Description: S3 bucket with artifact files (Lambda functions, templates, html files, etc.). Leave default.
     Type: String
     Default: awsiammedia
-    AllowedPattern: ^[0-9a-zA-Z]+([0-9a-zA-Z-]*[0-9a-zA-Z])*$
+    AllowedPattern: ^[0-9a-zA-Z]+([0-9a-zA-Z-.]*[0-9a-zA-Z])*$
     ConstraintDescription: ArtifactsBucket S3 bucket name can include numbers, lowercase letters, uppercase letters, and hyphens (-).
       It cannot start or end with a hyphen (-).
   ArtifactsPrefix:

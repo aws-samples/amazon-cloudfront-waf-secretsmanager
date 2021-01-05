@@ -65,7 +65,6 @@ Parameters:
   ArtifactsBucket:
     Description: S3 bucket with artifact files (Lambda functions, templates, html files, etc.).
     Type: String
-    Default: 
     AllowedPattern: ^[0-9a-zA-Z]+([0-9a-zA-Z-.]*[0-9a-zA-Z])*$
     ConstraintDescription: ArtifactsBucket S3 bucket name can include numbers, lowercase letters, uppercase letters, and hyphens (-).
       It cannot start or end with a hyphen (-).
@@ -73,7 +72,7 @@ Parameters:
     Description: Path in the S3 bucket containing artifact files. Must be in-region.
     Type: String
     Default: /
-    AllowedPattern: ^[0-9a-zA-Z-/]*$
+    AllowedPattern: ^[0-9a-zA-Z-/_]*$
     ConstraintDescription: ArtifactsPrefix key prefix can include numbers, lowercase letters, uppercase letters, hyphens (-),
       and forward slash (/). Must be in-region.
 
