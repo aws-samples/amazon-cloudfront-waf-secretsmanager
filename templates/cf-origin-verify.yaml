@@ -320,7 +320,7 @@ Resources:
     Type: AWS::Lambda::LayerVersion
     Properties:
       CompatibleRuntimes:
-        - python3.7
+        - python3.9
       Content:
         S3Bucket: !Ref ArtifactsBucket
         S3Key: !Sub ${ArtifactsPrefix}python-requests-lambda-layer.zip
@@ -332,7 +332,7 @@ Resources:
     Properties:
       Description: Serets Manager Rotation Lambda
       Handler: lambda_function.lambda_handler
-      Runtime: python3.7
+      Runtime: python3.9
       Layers: 
         - !Ref PythonRequestsLayer
       Environment:
@@ -450,21 +450,21 @@ Resources:
         CloudWatchMetricsEnabled: true
         MetricName: !Sub '${AWS::StackName}ACLMetricG'
       Rules:
-        - Name: !Sub '${AWS::StackName}WafIpBlacklist'
+        - Name: !Sub '${AWS::StackName}WafIpBlocklist'
           Priority: 0
           Action:
             Block: {}
           VisibilityConfig:
             SampledRequestsEnabled: true
             CloudWatchMetricsEnabled: true
-            MetricName: !Sub '${AWS::StackName}WafIpBlacklist'
+            MetricName: !Sub '${AWS::StackName}WafIpBlocklist'
           Statement:
             OrStatement:
               Statements:
               - IPSetReferenceStatement: 
-                  Arn: !GetAtt wafBlacklistIpSetV4.Arn
+                  Arn: !GetAtt wafBlocklistIpSetV4.Arn
               - IPSetReferenceStatement:
-                  Arn: !GetAtt wafBlacklistIpSetV6.Arn
+                  Arn: !GetAtt wafBlocklistIpSetV6.Arn
 
 ## Associate WAF ACL with load balancer
   wafALBAssociation:
@@ -568,7 +568,7 @@ Resources:
           WillReplace: 'true'
 
   ## Deploy a WAF WebACL, Sample Rule, Sample IPSet
-  wafBlacklistIpSetV4:
+  wafBlocklistIpSetV4:
     Type: AWS::WAFv2::IPSet
     Properties:
         Description: SampleIPSetV4
@@ -576,7 +576,7 @@ Resources:
         IPAddressVersion: IPV4
         Addresses:
             - 127.0.0.0/8
-  wafBlacklistIpSetV6:
+  wafBlocklistIpSetV6:
     Type: AWS::WAFv2::IPSet
     Properties:
         Description: SampleIPSetV6
@@ -710,7 +710,7 @@ Resources:
         Handler: index.handler
         MemorySize: 128
         Role: !GetAtt AMILambdaExecutionRole.Arn
-        Runtime: "python3.6"
+        Runtime: "python3.9"
         Timeout: 30
         Code:
             ZipFile: !Sub |
