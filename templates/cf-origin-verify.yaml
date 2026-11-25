@@ -2,11 +2,12 @@
 ## This is a sample template for demonstration purposes.
 ## Edit according to your requirements prior to deployment.
 ## It creates a CloudFront distribution with a test website in a new VPC. 
-## There 2 EC2 instances in an auto-scaling group behind an ALB with the default Apache index.html
+## There 2 EC2 instances (Amazon Linux 2023) in an auto-scaling group behind an ALB serving a test index.html
 ## This template MUST be deployed in N. Va (us-east-1) due to the Global WAF ACL requirement.
 ##
 ## Changelog:
 ##  - Initial sample
+##  - Launch template with IMDSv2, Amazon Linux 2023 from SSM public parameter, Python 3.14, origin test refuses redirects
 ##
 ## Dependencies:
 ## CF, WAF, EC2, ALB, SM, Lambda, US-EAST-1
@@ -28,6 +29,10 @@ Parameters:
       - "t3.micro"
       - "t3.small"
       - "t3.medium"
+  LatestAmiId:
+    Description: Amazon Linux 2023 AMI for web servers, resolved from the SSM public parameter. Leave default.
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
   RotateInterval:
     Default: "7"
     Description: Rotation interval in days for origin secret value. Full rotation requires 2 intervals.
@@ -73,17 +78,17 @@ Metadata:
       - ArtifactsPrefix
     ParameterLabels:
       EC2InstanceSize:
-        Description: Instance size for Web Servers.
+        default: Instance size for Web Servers.
       RotateInterval:
-        Description: Rotation interval in days for origin secret value. Full rotation requires 2 intervals.
+        default: Rotation interval in days for origin secret value. Full rotation requires 2 intervals.
       HeaderName:
-        Description: Header name for secret string.
+        default: Header name for secret string.
       WAFRulePriority:
-        Description: Rule number to use for regional WAF web ACL. 0 is recommended.
+        default: Rule number to use for regional WAF web ACL. 0 is recommended.
       ArtifactsBucket:
-        Description: S3 bucket with artifact files (Lambda functions, templates, html files, etc.). Leave default.
+        default: S3 bucket with artifact files (Lambda functions, templates, html files, etc.). Leave default.
       ArtifactsPrefix:
-        Description: Path in the S3 bucket containing artifact files. Leave default.
+        default: Path in the S3 bucket containing artifact files. Leave default.
 
 ## Resources
 
@@ -307,6 +312,7 @@ Resources:
       FunctionName: !Ref OriginSecretRotateFunction
       Action: lambda:InvokeFunction
       Principal: 'secretsmanager.amazonaws.com'
+      SourceAccount: !Ref 'AWS::AccountId'
 
   OriginVerifyRotateSchedule:
     Type: AWS::SecretsManager::RotationSchedule
@@ -320,7 +326,7 @@ Resources:
     Type: AWS::Lambda::LayerVersion
     Properties:
       CompatibleRuntimes:
-        - python3.9
+        - python3.14
       Content:
         S3Bucket: !Ref ArtifactsBucket
         S3Key: !Sub ${ArtifactsPrefix}python-requests-lambda-layer.zip
@@ -332,7 +338,7 @@ Resources:
     Properties:
       Description: Serets Manager Rotation Lambda
       Handler: lambda_function.lambda_handler
-      Runtime: python3.9
+      Runtime: python3.14
       Layers: 
         - !Ref PythonRequestsLayer
       Environment:
@@ -492,25 +498,27 @@ Resources:
           - Key: Name
             Value: !Join ["-" , [!Ref 'AWS::StackName', EC2Sg]]
 
-  LaunchConfiguration:
-    Type: AWS::AutoScaling::LaunchConfiguration
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
     Properties:
-      ImageId:
-        !GetAtt AMIInfo.Id
-      SecurityGroups: 
-      - !GetAtt cfalbEC2Sg.GroupId
-      InstanceType: !Ref EC2InstanceSize
-      IamInstanceProfile:
-        Ref: EC2InstanceProfile
-      UserData:
-        Fn::Base64: !Sub |
-          #!/bin/bash -xe
-          yum update -y
-          yum install -y curl httpd awslogs
-          /usr/bin/aws configure set region ${AWS::Region}
-          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource LaunchConfiguration --configsets site_config --region ${AWS::Region}
-          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource AutoScalingGroup --region ${AWS::Region}
-
+      LaunchTemplateData:
+        ImageId: !Ref LatestAmiId
+        InstanceType: !Ref EC2InstanceSize
+        SecurityGroupIds:
+        - !GetAtt cfalbEC2Sg.GroupId
+        IamInstanceProfile:
+          Arn: !GetAtt EC2InstanceProfile.Arn
+        MetadataOptions:
+          HttpEndpoint: enabled
+          HttpTokens: required
+          HttpPutResponseHopLimit: 1
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash -xe
+            dnf update -y
+            dnf install -y httpd aws-cfn-bootstrap amazon-cloudwatch-agent
+            /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource LaunchTemplate --configsets site_config --region ${AWS::Region}
+            /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource AutoScalingGroup --region ${AWS::Region}
     Metadata:
       AWS::CloudFormation::Init:
         configSets:
@@ -518,37 +526,47 @@ Resources:
           - init_site
         init_site:
           files:
-            /etc/awslogs/awslogs.conf:
+            /var/www/html/index.html:
+              content: |
+                <html><head><title>CloudFront origin test page</title></head>
+                <body><h1>CloudFront origin test page</h1><p>This page is served by the sample origin.</p></body></html>
+              mode: "000644"
+              owner: "root"
+              group: "root"
+            /opt/aws/amazon-cloudwatch-agent/etc/http-access.json:
               content: !Sub |
-                [general]
-                state_file = /var/lib/awslogs/agent-stat
-                [/var/log/http-access]
-                file = /var/log/httpd/access_log
-                log_group_name = ${HttpAccessLogGroup}
-                buffer_duration = 5000
-                log_stream_name = {instance_id}-http-access
-                initial_position = start_of_file
+                {
+                  "logs": {
+                    "logs_collected": {
+                      "files": {
+                        "collect_list": [
+                          {
+                            "file_path": "/var/log/httpd/access_log",
+                            "log_group_name": "${HttpAccessLogGroup}",
+                            "log_stream_name": "{instance_id}-http-access"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
               mode: "000644"
               owner: "root"
               group: "root"
           commands:
-            01config_httpd:
-              cwd: /tmp
-              command:
-                "cp -p /usr/share/httpd/noindex/index.html /var/www/html/"
-            02start_services:
-              cwd: /var/www/
-              env:
-                PATH: /usr/bin:/usr/local/bin:/sbin:$PATH
-              command: "systemctl enable httpd && systemctl start httpd; systemctl start awslogsd && systemctl enable awslogsd.service"
-
+            01start_httpd:
+              command: "systemctl enable --now httpd"
+            02start_cwagent:
+              command: "/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/http-access.json"
   AutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
         VPCZoneIdentifier:
             - !Ref sub1Private
             - !Ref sub2Private
-        LaunchConfigurationName: !Ref LaunchConfiguration
+        LaunchTemplate:
+          LaunchTemplateId: !Ref LaunchTemplate
+          Version: !GetAtt LaunchTemplate.LatestVersionNumber
         MinSize: '2'
         MaxSize: '2'
         TargetGroupARNs:
@@ -660,97 +678,6 @@ Resources:
         Roles:
         - Ref: EC2InstanceRole
 
-  AMILambdaExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-        - Effect: Allow
-          Principal:
-            Service:
-            - lambda.amazonaws.com
-          Action:
-          - sts:AssumeRole
-      Path: "/"
-      Policies:
-      - PolicyName: root
-        PolicyDocument:
-          Version: '2012-10-17'
-          Statement:
-          - Effect: Allow
-            Action:
-            - logs:CreateLogGroup
-            - logs:CreateLogStream
-            - logs:PutLogEvents
-            Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*AMIInfoFunction*'
-          - Effect: Allow
-            Action:
-            - ec2:DescribeImages
-            Resource: "*"
-
-  # AMIInfoFunction - Look up an AMI based on a NameFilter
-  #
-  # This AWS Lambda function is used to look up an Amazon EC2 AMI based
-  # on a name filter. An example of a name filter would be:
-  #
-  # amzn2-ami-hvm\*ebs
-  #
-  # After looking up the names of all images that satify the filter,
-  # they are sorted in reverse by date/time stamp and the first AMI
-  # ID (which corresponds to the newest AMI) is returned.
-  #
-  # Using a Lambda function makes it possible to look up the AMI
-  # dynamically.  THe alternative would be to create a static map.
-
-  AMIInfoFunction:
-    Type: AWS::Lambda::Function
-    Properties: 
-        Description: "Look up an AMI based on a filter"
-        Handler: index.handler
-        MemorySize: 128
-        Role: !GetAtt AMILambdaExecutionRole.Arn
-        Runtime: "python3.9"
-        Timeout: 30
-        Code:
-            ZipFile: !Sub |
-              import json
-              import boto3
-              import cfnresponse
-              def handler(event, context):
-                if event['RequestType'] == 'Delete':
-                  responseData = {}      
-                  cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
-                  return
-                
-                ec2=boto3.client('ec2')
-                imageDescriptions=ec2.describe_images(
-                  Owners=['amazon'],
-                  Filters=[
-                    {'Name': 'name', 'Values': [event['ResourceProperties']['NameFilter']]},
-                    {'Name': 'architecture', 'Values': ['x86_64']}
-                  ],
-                )
-                
-                numImageDescriptions = len(imageDescriptions['Images'])
-                if numImageDescriptions < 2:
-                  responseData = {}
-                  cfnresponse.send(event, context, cfnresponse.FAILED, responseData)
-                else:
-                  amiNames = sorted(imageDescriptions['Images'],
-                    key=lambda x: x['CreationDate'],
-                    reverse=True)
-                  responseData = {}
-                  responseData['Id'] = amiNames[0]['ImageId']
-                  cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
-                return
-
-  AMIInfo:
-    Type: Custom::AMIInfo
-    Properties:
-        ServiceToken: !GetAtt AMIInfoFunction.Arn
-        NameFilter: 'amzn2-ami-hvm*gp2'
-
   HttpAccessLogGroup:
     Type: "AWS::Logs::LogGroup"
     Properties:
@@ -790,4 +717,4 @@ Outputs:
     Value: !Join ['', ['https://console.aws.amazon.com/wafv2/homev2/web-acl/', !Select [0, !Split ['|', !Ref 'wafACLG']], '/', !GetAtt 'wafACLG.Id', '/overview?region=global']]
   AMIId:
     Description: AMI Id
-    Value: !GetAtt AMIInfo.Id
+    Value: !Ref LatestAmiId
