@@ -189,10 +189,15 @@ def update_cfdistro(distroid, headervalue):
 
 
 def test_origin(url, secret):
+    # Do not follow redirects: the secret header must only ever be sent to the configured origin.
     response = requests.get(
     url,
     headers={HeaderName: secret},
+    allow_redirects=False,
+    timeout=10,
     )
+    if response.is_redirect:
+        logger.error("Origin URL, %s redirected to %s. Set ORIGINURL to a URL that returns 200 directly." % (url, response.headers.get('Location')))
     
     logger.info("Testing URL, %s - response code, %s " % (url, response.status_code))
 
