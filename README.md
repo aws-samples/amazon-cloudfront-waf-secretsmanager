@@ -8,6 +8,16 @@ This solution is intended to enhance security for CloudFront custom origins that
 
 _Note: The sample solution requires deployment in the N. Virginia (us-east-1) region. An [additional sample template](templates/cf-origin-verify-sm-only.yaml) is available for testing this solution with an existing CloudFront distribution and regional WAF web ACL._
 
+### Choosing between this solution and CloudFront VPC origins
+
+If your origin is an Application Load Balancer, Network Load Balancer or EC2 instance, consider [CloudFront VPC origins](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-vpc-origins.html). They let the origin run in a private subnet with no public endpoint, and CloudFront reaches it over the AWS network. Your origin then needs no custom header, secret or rotation.
+
+This solution fits origins that must stay publicly reachable, such as Amazon API Gateway, servers outside AWS, or origins that other clients also call directly.
+
+_Note: To keep the sample free of certificate setup, CloudFront connects to the origin over HTTP, so the custom header crosses the internet unencrypted. For production use, configure HTTPS between CloudFront and your origin._
+
+_Note: The rotation function tests the origin URL with each secret value and does not follow redirects, so the origin URL must return HTTP 200 directly._
+
 ### Solution diagram
 
 ![architecture diagram](images/solutiondiagram.png)
